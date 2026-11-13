@@ -20,6 +20,7 @@ type ColorBendsProps = {
   iterations?: number;
   intensity?: number;
   bandWidth?: number;
+  color?: string;
 };
 
 const MAX_COLORS = 8 as const;

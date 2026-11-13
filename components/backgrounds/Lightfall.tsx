@@ -4,10 +4,12 @@ import { useEffect, useRef, useState, type CSSProperties } from 'react';
 
 const MAX_COLORS = 8;
 const BLOOM_LEVELS = 4;
+const DEFAULT_COLORS = ['#F3EFF9', '#C4B2E0', '#A855F7', '#896ABD'];
 
 export interface LightfallProps {
   colors?: string[];
   backgroundColor?: string;
+  baseColor?: string;
   speed?: number;
   streakCount?: number;
   streakWidth?: number;
@@ -40,6 +42,7 @@ export interface LightfallProps {
 interface Settings {
   colors: string[];
   backgroundColor: string;
+  baseColor: string;
   speed: number;
   streakCount: number;
   streakWidth: number;
@@ -89,6 +92,7 @@ void main() {
 const STREAKS = `#version 300 es
 precision highp float;
 uniform vec2 uView;
+uniform float uDpr;
 uniform float uZoom;
 uniform float uPhase;
 uniform float uTwinkleClock;
@@ -139,7 +143,7 @@ float orb(float d, float r) {
 
 void main() {
   vec2 frag = gl_FragCoord.xy;
-  vec2 screen = (2.0 * frag - uView) / uView.x;
+  vec2 screen = (2.0 * frag - uView) / max(uView.x, 1.0);
   vec2 p = screen;
   mat2 warp = mat2(1.0);
   if (uLens.z > 0.0) {
@@ -169,7 +173,7 @@ void main() {
     (hit.y * stepX.z - hit.z * stepX.y) / ring,
     stepY.x,
     (hit.y * stepY.z - hit.z * stepY.y) / ring
-  ) * warp * (2.0 / uView.x);
+  ) * warp * (2.0 / max(uView.x, 1.0));
 
   vec2 gradX = vec2(jacobian[0][0], jacobian[1][0]);
   vec2 gradTheta = vec2(jacobian[0][1], jacobian[1][1]);
@@ -178,13 +182,14 @@ void main() {
   float along = scale / det;
   float skew = dot(gradX, gradTheta) / det;
   float spacing = SPACING / scale;
-  float detail = smoothstep(1.6, 3.2, spacing);
+  float cssSpacing = spacing * max(uDpr, 1.0);
+  float detail = smoothstep(0.9, 2.2, cssSpacing);
   if (detail <= 0.0) {
     outColor = vec4(0.0, 0.0, 0.0, 1.0);
     return;
   }
-  float halfWidth = min(uWidth / scale, 0.2 * spacing);
-  float headRadius = min(2.0 * uWidth / scale, 0.35 * spacing);
+  float halfWidth = min(uWidth / scale, 0.22 * spacing);
+  float headRadius = min(2.0 * uWidth / scale, 0.36 * spacing);
   float headReach = 4.0 * max(0.6 * headRadius, 0.7);
   float edge = uColumns > 1 ? 1.0 : 0.5;
   float period = TAU / uRings;
@@ -240,7 +245,7 @@ uniform float uLimit;
 out vec4 outColor;
 
 void main() {
-  vec2 uv = gl_FragCoord.xy / uTarget;
+  vec2 uv = gl_FragCoord.xy / max(uTarget, vec2(1.0));
   vec3 color = texture(uSource, uv - uTexel).rgb;
   color += texture(uSource, uv + uTexel).rgb;
   color += texture(uSource, uv + vec2(uTexel.x, -uTexel.y)).rgb;
@@ -256,7 +261,7 @@ uniform vec2 uStep;
 out vec4 outColor;
 
 void main() {
-  vec2 uv = gl_FragCoord.xy / uTarget;
+  vec2 uv = gl_FragCoord.xy / max(uTarget, vec2(1.0));
   vec3 color = texture(uSource, uv).rgb * 0.181862;
   color += (texture(uSource, uv + uStep * 1.423135).rgb + texture(uSource, uv - uStep * 1.423135).rgb) * 0.284316;
   color += (texture(uSource, uv + uStep * 3.326702).rgb + texture(uSource, uv - uStep * 3.326702).rgb) * 0.106598;
@@ -281,6 +286,7 @@ uniform float uFade;
 uniform float uLightMode;
 uniform vec3 uTopColor;
 uniform float uTopGlow;
+uniform vec3 uBaseColor;
 out vec4 outColor;
 
 float smootherstep01(float t) {
@@ -289,7 +295,7 @@ float smootherstep01(float t) {
 }
 
 void main() {
-  vec2 uv = gl_FragCoord.xy / uView;
+  vec2 uv = gl_FragCoord.xy / max(uView, vec2(1.0));
   vec3 light = texelFetch(uScene, ivec2(gl_FragCoord.xy), 0).rgb;
   if (uBloom > 0.0) {
     vec3 halo = texture(uBloom0, uv).rgb * 0.42;
@@ -301,7 +307,7 @@ void main() {
   light *= uDecode * uGlow * uPresence;
 
   if (uLightMode < 0.5 && uTopGlow > 0.0) {
-    float aspect = uView.x / uView.y;
+    float aspect = uView.x / max(uView.y, 1.0);
     vec2 q = vec2((uv.x - 0.5) * aspect, 1.04 - uv.y);
     float spread = 0.34 * max(aspect, 0.75);
     float core = exp(-q.x * q.x / (spread * spread) - q.y * q.y / 0.06);
@@ -330,8 +336,8 @@ void main() {
     chroma = mix(vec3(0.3), chroma, smoothstep(0.08, 0.35, saturation));
     outColor = vec4(chroma * coverage, coverage);
   } else {
-    vec3 color = clamp(mapped + grain, 0.0, 1.0) * mask;
-    outColor = vec4(color, max(color.r, max(color.g, color.b)));
+    vec3 color = clamp(uBaseColor + mapped * mask + grain, 0.0, 1.0);
+    outColor = vec4(color, 1.0);
   }
 }`;
 
@@ -341,12 +347,21 @@ const TAU = Math.PI * 2;
 
 const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
 
+const hexToRgb = (hex: string): [number, number, number] => {
+  const clean = hex.replace('#', '');
+  const full = clean.length === 3 ? clean.split('').map(c => c + c).join('') : clean;
+  const num = parseInt(full, 16);
+  if (Number.isNaN(num)) return [0.027, 0.024, 0.043];
+  return [((num >> 16) & 255) / 255, ((num >> 8) & 255) / 255, (num & 255) / 255];
+};
+
 const compile = (gl: WebGL2RenderingContext, type: number, source: string) => {
   const shader = gl.createShader(type);
   if (!shader) return null;
   gl.shaderSource(shader, source);
   gl.compileShader(shader);
   if (gl.getShaderParameter(shader, gl.COMPILE_STATUS)) return shader;
+  console.error('[Lightfall] Shader compile error:', gl.getShaderInfoLog(shader));
   gl.deleteShader(shader);
   return null;
 };
@@ -363,6 +378,7 @@ const link = (gl: WebGL2RenderingContext, fragmentSource: string): Program | nul
   gl.deleteShader(vertex);
   gl.deleteShader(fragment);
   if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+    console.error('[Lightfall] Program link error:', gl.getProgramInfoLog(program));
     gl.deleteProgram(program);
     return null;
   }
@@ -375,9 +391,10 @@ const link = (gl: WebGL2RenderingContext, fragmentSource: string): Program | nul
   return { program, uniforms };
 };
 
-const Lightfall = ({
-  colors = ['#ffffff'],
-  backgroundColor = '#94a3b8',
+export default function Lightfall({
+  colors = DEFAULT_COLORS,
+  backgroundColor = '#896ABD',
+  baseColor = '#07060B',
   speed = 0.3,
   streakCount = 2,
   streakWidth = 0.8,
@@ -386,7 +403,7 @@ const Lightfall = ({
   density = 0.6,
   twinkle = 0.3,
   zoom = 3,
-  backgroundGlow = 0.1,
+  backgroundGlow = 0.18,
   headGlow = 0.6,
   depth = 0.5,
   bloom = 0.35,
@@ -405,14 +422,16 @@ const Lightfall = ({
   dpr,
   className = '',
   style
-}: LightfallProps) => {
+}: LightfallProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const wakeRef = useRef<(() => void) | null>(null);
   const [generation, setGeneration] = useState(0);
+
   const settings: Settings = {
-    colors: (Array.isArray(colors) && colors.length ? colors : ['#ffffff']).slice(0, MAX_COLORS).map(String),
+    colors: (Array.isArray(colors) && colors.length ? colors : DEFAULT_COLORS).slice(0, MAX_COLORS).map(String),
     backgroundColor: String(backgroundColor),
+    baseColor: String(baseColor),
     speed,
     streakCount: Math.round(clamp(streakCount, 1, 16)),
     streakWidth: Math.max(0.05, streakWidth),
@@ -438,26 +457,29 @@ const Lightfall = ({
     paused,
     dpr
   };
+
   const settingsRef = useRef<Settings>(settings);
 
   useEffect(() => {
     settingsRef.current = settings;
+    wakeRef.current?.();
   });
 
   useEffect(() => {
     const container = containerRef.current;
     const canvas = canvasRef.current;
     const gl = canvas?.getContext('webgl2', {
-      alpha: true,
-      premultipliedAlpha: true,
+      alpha: false,
       antialias: false,
       depth: false,
-      stencil: false,
-      powerPreference: 'high-performance'
+      stencil: false
     });
-    if (!container || !canvas || !gl) return undefined;
+    if (!container || !canvas || !gl) {
+      console.error('[Lightfall] WebGL2 context unavailable');
+      return undefined;
+    }
 
-    const floatTargets = !!gl.getExtension('EXT_color_buffer_float');
+    const canUseFloatLinear = !!gl.getExtension('EXT_color_buffer_float') && !!gl.getExtension('OES_texture_float_linear');
     const streakProgram = link(gl, STREAKS);
     const downProgram = link(gl, DOWNSAMPLE);
     const blurProgram = link(gl, BLUR);
@@ -479,8 +501,8 @@ const Lightfall = ({
     gl.enableVertexAttribArray(0);
     gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
 
-    const format = floatTargets ? gl.RGBA16F : gl.RGBA8;
-    const encode = floatTargets ? 1 : 0.25;
+    const format = canUseFloatLinear ? gl.RGBA16F : gl.RGBA8;
+    const encode = canUseFloatLinear ? 1 : 0.25;
     const createTarget = (): Target => ({ texture: null, framebuffer: gl.createFramebuffer(), width: 0, height: 0 });
     const scene = createTarget();
     const levels = Array.from({ length: BLOOM_LEVELS }, () => [createTarget(), createTarget()]);
@@ -513,30 +535,13 @@ const Lightfall = ({
       gl.bindTexture(gl.TEXTURE_2D, texture);
     };
 
-    const probe = document.createElement('canvas').getContext('2d', { willReadFrequently: true });
-    const colorCache = new Map<string, number[]>();
-    const toRgb = (value: string): number[] => {
-      if (colorCache.has(value)) return colorCache.get(value) as number[];
-      let rgb = [1, 1, 1];
-      if (probe) {
-        probe.clearRect(0, 0, 1, 1);
-        probe.fillStyle = '#ffffff';
-        probe.fillStyle = value;
-        probe.fillRect(0, 0, 1, 1);
-        const [r, g, b] = probe.getImageData(0, 0, 1, 1).data;
-        rgb = [r / 255, g / 255, b / 255];
-      }
-      colorCache.set(value, rgb);
-      return rgb;
-    };
-    const toLinear = (value: string) => toRgb(value).map(channel => channel * channel);
+    const toLinear = (value: string) => hexToRgb(value).map(channel => channel * channel);
 
-    const reduce = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false;
     const palette = new Float32Array(MAX_COLORS * 3);
     const pointer = { x: 0, y: 0, inside: false, held: false };
     const state = {
       travel: 0,
-      intro: settingsRef.current.intro && !reduce ? 0 : 1,
+      intro: settingsRef.current.intro ? 0 : 1,
       mouseX: 0,
       mouseY: 0,
       lensX: 0,
@@ -546,14 +551,15 @@ const Lightfall = ({
     };
     let raf = 0;
     let last = 0;
-    let visible = true;
 
     const render = () => {
       const s = settingsRef.current;
       const width = canvas.width;
       const height = canvas.height;
-      const cssWidth = Math.max(1, container.clientWidth);
-      const cssHeight = Math.max(1, container.clientHeight);
+      const cssWidth = Math.max(1, container.clientWidth || window.innerWidth);
+      const cssHeight = Math.max(1, container.clientHeight || window.innerHeight);
+      const effectiveDpr = width / cssWidth;
+
       gl.bindVertexArray(vao);
       allocate(scene, width, height);
       levels.forEach((pair, index) => {
@@ -563,9 +569,9 @@ const Lightfall = ({
         allocate(pair[1], levelWidth, levelHeight);
       });
 
-      const intro = state.intro;
-      const presence = Math.min(1, intro * 2.2);
-      const stretch = 1 + 5 * Math.pow(1 - intro, 2) + 2.5 * state.warp;
+      const introVal = state.intro;
+      const presence = Math.min(1, introVal * 2.2);
+      const stretch = 1 + 5 * Math.pow(1 - introVal, 2) + 2.5 * state.warp;
       const rings = Math.max(1, Math.floor(TAU * Math.max(s.density, 0.05) + 0.5));
       const period = TAU / rings;
       const clock = 9 + state.travel;
@@ -579,6 +585,7 @@ const Lightfall = ({
 
       const r = pass(scene, streakProgram);
       gl.uniform2f(r.uView, width, height);
+      gl.uniform1f(r.uDpr, effectiveDpr);
       gl.uniform1f(r.uZoom, s.zoom);
       gl.uniform1f(r.uPhase, clock % (16 * period));
       gl.uniform1f(r.uTwinkleClock, clock % TAU);
@@ -654,29 +661,30 @@ const Lightfall = ({
       gl.uniform1f(c.uLightMode, s.lightMode ? 1 : 0);
       gl.uniform3fv(c.uTopColor, toLinear(s.backgroundColor));
       gl.uniform1f(c.uTopGlow, s.backgroundGlow);
+      gl.uniform3fv(c.uBaseColor, hexToRgb(s.baseColor));
       gl.drawArrays(gl.TRIANGLES, 0, 3);
       for (let unit = BLOOM_LEVELS; unit >= 0; unit--) bind(unit, null);
     };
 
     const frame = (now: number) => {
       raf = 0;
-      if (!visible || document.hidden) return;
+      if (document.hidden) return;
       const s = settingsRef.current;
       const dt = last ? Math.min(0.05, (now - last) / 1000) : 1 / 60;
       last = now;
-      if (!s.intro || reduce) state.intro = 1;
+
+      if (!s.intro) state.intro = 1;
       else if (state.intro < 1) state.intro = Math.min(1, state.intro + dt / INTRO_SECONDS);
 
-      const holding = s.holdToWarp && pointer.held && pointer.inside && !reduce;
+      const holding = s.holdToWarp && pointer.held && pointer.inside;
       state.warp += ((holding ? 1 : 0) - state.warp) * (1 - Math.exp(-dt * (holding ? 2.2 : 1.6)));
       const rush = WARP_SPEED * Math.pow(1 - state.intro, 2) + 6 * state.warp;
-      const running = !s.paused && !reduce;
-      if (running) state.travel += dt * 0.1 * s.speed * (1 + rush);
+      if (!s.paused) state.travel += dt * 0.1 * s.speed * (1 + rush);
 
-      const ratio = canvas.width / Math.max(1, container.clientWidth);
+      const ratio = canvas.width / Math.max(1, container.clientWidth || window.innerWidth);
       const targetX = pointer.x * ratio;
-      const targetY = (container.clientHeight - pointer.y) * ratio;
-      const engaged = s.mouseInteraction && pointer.inside && !reduce;
+      const targetY = ((container.clientHeight || window.innerHeight) - pointer.y) * ratio;
+      const engaged = s.mouseInteraction && pointer.inside;
       if (engaged && state.touch < 0.01) {
         state.mouseX = targetX;
         state.mouseY = targetY;
@@ -694,18 +702,18 @@ const Lightfall = ({
       render();
 
       const settling = state.intro < 1 || state.warp > 0.001 || Math.abs((engaged ? 1 : 0) - state.touch) > 0.002;
-      if ((running && s.speed !== 0) || settling) raf = requestAnimationFrame(frame);
+      if ((!s.paused && s.speed !== 0) || settling) raf = requestAnimationFrame(frame);
       else last = 0;
     };
 
     const wake = () => {
-      if (!raf && visible && !document.hidden) raf = requestAnimationFrame(frame);
+      if (!raf && !document.hidden) raf = requestAnimationFrame(frame);
     };
 
     const resize = () => {
       const s = settingsRef.current;
-      const width = Math.max(1, container.clientWidth);
-      const height = Math.max(1, container.clientHeight);
+      const width = Math.max(1, container.clientWidth || window.innerWidth);
+      const height = Math.max(1, container.clientHeight || window.innerHeight);
       const ratio = Math.min(s.dpr || window.devicePixelRatio || 1, 2);
       canvas.width = Math.max(1, Math.round(width * ratio));
       canvas.height = Math.max(1, Math.round(height * ratio));
@@ -754,23 +762,14 @@ const Lightfall = ({
       wake();
     };
 
-    const resizeObserver = new ResizeObserver(resize);
-    resizeObserver.observe(container);
-    const intersection = new IntersectionObserver(entries => {
-      visible = entries.some(entry => entry.isIntersecting);
-      if (visible) {
-        last = 0;
-        wake();
-      }
-    });
-    intersection.observe(container);
+    resize();
+    window.addEventListener('resize', resize);
     window.addEventListener('pointermove', onPointerMove, { passive: true });
     window.addEventListener('pointerdown', onPointerDown, { passive: true });
     window.addEventListener('pointerup', onPointerUp, { passive: true });
     window.addEventListener('pointercancel', onPointerUp, { passive: true });
     document.documentElement.addEventListener('pointerleave', onPointerLeave);
     document.addEventListener('visibilitychange', onVisibility);
-    resize();
 
     let lastDpr = settingsRef.current.dpr;
     wakeRef.current = () => {
@@ -789,8 +788,7 @@ const Lightfall = ({
       wakeRef.current = null;
       canvas.removeEventListener('webglcontextlost', onContextLost);
       canvas.removeEventListener('webglcontextrestored', onContextRestored);
-      resizeObserver.disconnect();
-      intersection.disconnect();
+      window.removeEventListener('resize', resize);
       window.removeEventListener('pointermove', onPointerMove);
       window.removeEventListener('pointerdown', onPointerDown);
       window.removeEventListener('pointerup', onPointerUp);
@@ -804,23 +802,16 @@ const Lightfall = ({
       [streakProgram, downProgram, blurProgram, compositeProgram].forEach(item => gl.deleteProgram(item.program));
       gl.deleteBuffer(buffer);
       gl.deleteVertexArray(vao);
-      if (!gl.isContextLost()) gl.getExtension('WEBGL_lose_context')?.loseContext();
     };
   }, [generation]);
-
-  useEffect(() => {
-    wakeRef.current?.();
-  });
 
   return (
     <div
       ref={containerRef}
-      className={`relative w-full h-full overflow-hidden ${className}`}
-      style={{ ...(mixBlendMode ? { mixBlendMode } : null), ...style }}
+      className={`relative h-full w-full overflow-hidden ${className}`}
+      style={{ backgroundColor: baseColor, ...(mixBlendMode ? { mixBlendMode } : null), ...style }}
     >
-      <canvas ref={canvasRef} className="absolute inset-0 block w-full h-full" aria-hidden="true" />
+      <canvas ref={canvasRef} className="absolute inset-0 block h-full w-full" aria-hidden="true" />
     </div>
   );
-};
-
-export default Lightfall;
+}
