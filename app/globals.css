@@ -24,3 +24,25 @@ body {
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
 }
+
+@keyframes hair-sway {
+  0%,
+  100% {
+    transform: rotate(-2.2deg) skewX(-1.2deg);
+  }
+  50% {
+    transform: rotate(2.2deg) skewX(1.2deg);
+  }
+}
+
+.avatar-hair {
+  transform-box: fill-box;
+  transform-origin: 50% 12%; /* pivot near the scalp */
+  animation: hair-sway 4.6s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .avatar-hair {
+    animation: none;
+  }
+}

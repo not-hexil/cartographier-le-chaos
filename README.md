@@ -4,6 +4,7 @@ just a personal playground while I build out my blog site.
 
 ## current progress
 - [x] navbar
+- [x] footer
 
 ## running it locally
 
@@ -23,3 +24,8 @@ pnpm dev
 ```
 
 then just open up `http://localhost:3000` in your browser.
+
+## Lighthouse Metrics
+22/11/2026
+![Lighthouse Metrics](image.png)
+Footer Inspo: [adxy](https://github.com/adxy/minima)
