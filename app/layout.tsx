@@ -1,7 +1,7 @@
 import type { Metadata } from 'next';
 import type { ReactNode } from 'react';
 import { MaterialRadialNav } from '@/components/layout/MaterialRadialNavbar';
-import './globals.css';
+import '@/app/globals.css';
 import { Footer } from '@/components/layout/MinimaFooter';
 
 export const metadata: Metadata = {

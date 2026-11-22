@@ -3,7 +3,7 @@ import type { CSSProperties } from "react";
 import { FOOTER_LINKS } from "@/lib/footer";
 import { CrowdCanvas } from "@/components/layout/CrowdCanvas";
 import { Avatar } from "@/components/layout/Avatar";
-import { WordRings } from "@/components/layout/WordRings";
+import { WordRings } from "@/components/WordRings";
 import { GlitchStrip } from "@/components/layout/GlitchSctrip";
 
 export interface FooterLinkItem {
